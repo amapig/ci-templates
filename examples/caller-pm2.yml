@@ -1,0 +1,98 @@
+# 调用 PM2 部署模板
+# 文件路径: .github/workflows/deploy.yml (在各项目仓库中)
+#
+# 使用方法:
+# 1. 复制本文件到项目仓库的 .github/workflows/deploy.yml
+# 2. 修改 inputs 中的项目配置
+# 3. 在 GitHub 仓库 Settings > Secrets 中添加 SERVER_SSH_KEY
+#    (GH_TOKEN 是 GitHub 自动提供的，不需要手动添加)
+# 4. 其他 Secrets (DATABASE_URL 等) 在 env_vars 中通过 ${{ secrets.XXX }} 引用
+
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: amapig/ci-templates/.github/workflows/deploy-pm2.yml@main
+    with:
+      # ===== 项目基本信息 =====
+      project_name: jiankaopaike
+      repo_name: jiankaopaike
+      deploy_path: /root/jiankao/jiankaopaike
+      pm2_process: jiankaopaike
+
+      # ===== 部署选项 =====
+      branch: ${{ github.ref_name }}
+      # pm2_mode: restart          # restart=快速重启 | delete-recreate=重建进程(重载环境变量)
+      # build_cmd: npm run build   # 自定义构建命令
+      # prisma_generate: true      # 是否运行 prisma generate
+      # prisma_migrate: true       # 是否运行 prisma db push
+
+      # ===== 环境变量 =====
+      # 所有项目特有的环境变量都写在这里，每行一个 KEY=VALUE
+      # 敏感值通过 secrets 引用 (需要先在 GitHub 仓库 Settings > Secrets 中添加)
+      env_vars: |
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+        NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+        AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+
+    secrets:
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ============================================================
+# 其他项目示例配置 (修改 project_name, repo_name, deploy_path, pm2_process, env_vars 即可)
+# ============================================================
+#
+# --- after-school-management ---
+#   with:
+#     project_name: after-school
+#     repo_name: after-school-management
+#     deploy_path: /root/after-school-management
+#     pm2_process: after-school
+#     pm2_mode: delete-recreate    # 这个项目需要重建进程来重载环境变量
+#     env_vars: |
+#       DATABASE_URL=file:./prod.db
+#       JWT_SECRET=${{ secrets.JWT_SECRET }}
+#       NODE_ENV=production
+#
+# --- school-lunch-waste-monitor ---
+#   with:
+#     project_name: lunch-monitor
+#     repo_name: school-lunch-waste-monitor
+#     deploy_path: /root/school-lunch-waste-monitor
+#     pm2_process: lunch-monitor
+#     env_vars: |
+#       DATABASE_URL=${{ secrets.DATABASE_URL }}
+#       NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+#       NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+#       AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+#
+# --- runwise-platform ---
+#   with:
+#     project_name: runwise
+#     repo_name: runwise-platform
+#     deploy_path: /root/runwise-platform
+#     pm2_process: runwise
+#     env_vars: |
+#       DATABASE_URL=${{ secrets.DATABASE_URL }}
+#       NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+#       NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+#       AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+#
+# --- shengxue-ai-planner ---
+#   with:
+#     project_name: shengxue-ai
+#     repo_name: shengxue-ai-planner
+#     deploy_path: /root/shengxue-ai-planner
+#     pm2_process: shengxue-ai
+#     env_vars: |
+#       DATABASE_URL=${{ secrets.DATABASE_URL }}
+#       NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+#       NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+#       AUTH_SECRET=${{ secrets.AUTH_SECRET }}

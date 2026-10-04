@@ -1,0 +1,31 @@
+# 调用 Docker 部署模板
+# 文件路径: .github/workflows/deploy.yml (在各项目仓库中)
+#
+# 适用于使用 docker-compose 的项目 (如 quantitative)
+
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: amapig/ci-templates/.github/workflows/deploy-docker.yml@main
+    with:
+      project_name: quantitative
+      repo_name: quantitative
+      deploy_path: /root/quantitative
+      branch: ${{ github.ref_name }}
+
+      # Docker 项目的环境变量 (写入 .env 供 docker-compose 使用)
+      env_vars: |
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+        NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+        AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+
+    secrets:
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

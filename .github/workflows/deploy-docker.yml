@@ -1,0 +1,119 @@
+name: Deploy Docker Project
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        description: 'Project name'
+        required: true
+        type: string
+      repo_name:
+        description: 'GitHub repo name'
+        required: true
+        type: string
+      deploy_path:
+        description: 'Server deploy directory'
+        required: true
+        type: string
+      env_vars:
+        description: 'Environment variables for docker-compose (one KEY=VALUE per line)'
+        required: false
+        type: string
+        default: ''
+      branch:
+        description: 'Branch to deploy'
+        required: false
+        type: string
+        default: 'main'
+      server_host:
+        description: 'Server IP'
+        required: false
+        type: string
+        default: '62.234.100.4'
+      server_user:
+        description: 'Server username'
+        required: false
+        type: string
+        default: 'root'
+    secrets:
+      SERVER_SSH_KEY:
+        required: true
+      GH_TOKEN:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy Docker ${{ inputs.project_name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "echo 'SSH OK' && whoami"
+
+      - name: Write deploy script to server
+        env:
+          ENV_VARS_CONTENT: ${{ inputs.env_vars }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          ENV_VARS_B64=$(printf '%s' "$ENV_VARS_CONTENT" | base64 -w 0)
+
+          cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "cat > /tmp/deploy_${{ inputs.project_name }}.sh"
+          #!/bin/bash
+          set -e
+          echo "=== Starting Docker deployment at \$(date) ==="
+          echo "Project: ${{ inputs.project_name }}"
+          echo "Branch: ${{ inputs.branch }}"
+
+          APP_DIR="${{ inputs.deploy_path }}"
+          REPO_URL="https://amapig:\${GH_TOKEN}@github.com/amapig/${{ inputs.repo_name }}.git"
+
+          echo ">>> Clone or update repository"
+          if [ -d "\$APP_DIR/.git" ]; then
+            cd "\$APP_DIR"
+            git remote set-url origin "\$REPO_URL"
+            git fetch origin
+            git reset --hard "origin/${{ inputs.branch }}"
+          else
+            git clone "\$REPO_URL" "\$APP_DIR"
+            cd "\$APP_DIR"
+          fi
+
+          echo ">>> Writing .env file"
+          echo "${ENV_VARS_B64}" | base64 -d > "\$APP_DIR/.env"
+
+          echo ">>> Pull Docker images"
+          cd "\$APP_DIR"
+          docker compose pull
+
+          echo ">>> Restart containers"
+          docker compose up -d --remove-orphans
+
+          echo ">>> Cleanup old images"
+          docker image prune -f
+
+          echo "=== Docker deploy complete at \$(date) ==="
+          docker compose ps
+          SCRIPT
+
+      - name: Execute deploy script
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "bash /tmp/deploy_${{ inputs.project_name }}.sh && rm /tmp/deploy_${{ inputs.project_name }}.sh"

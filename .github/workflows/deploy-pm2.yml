@@ -1,0 +1,207 @@
+name: Deploy PM2 Project
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        description: 'Project name (used for temp script naming)'
+        required: true
+        type: string
+      repo_name:
+        description: 'GitHub repo name (e.g. jiankaopaike)'
+        required: true
+        type: string
+      deploy_path:
+        description: 'Server deploy directory (e.g. /root/jiankao/jiankaopaike)'
+        required: true
+        type: string
+      pm2_process:
+        description: 'PM2 process name'
+        required: true
+        type: string
+      pm2_mode:
+        description: 'PM2 restart mode: restart (keeps env) or delete-recreate (reloads env from .env)'
+        required: false
+        type: string
+        default: 'restart'
+      env_vars:
+        description: 'Environment variables to write to .env file (one KEY=VALUE per line)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to deploy'
+        required: false
+        type: string
+        default: 'main'
+      build_cmd:
+        description: 'Build command'
+        required: false
+        type: string
+        default: 'npm run build'
+      prisma_generate:
+        description: 'Run npx prisma generate before build'
+        required: false
+        type: boolean
+        default: true
+      prisma_migrate:
+        description: 'Run prisma migration (db push)'
+        required: false
+        type: boolean
+        default: true
+      server_host:
+        description: 'Server IP (override if different from default)'
+        required: false
+        type: string
+        default: '62.234.100.4'
+      server_user:
+        description: 'Server username (override if different from default)'
+        required: false
+        type: string
+        default: 'root'
+    secrets:
+      SERVER_SSH_KEY:
+        required: true
+      GH_TOKEN:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.project_name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "echo 'SSH OK' && whoami"
+
+      - name: Write deploy script to server
+        env:
+          ENV_VARS_CONTENT: ${{ inputs.env_vars }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          # Base64 encode env vars to avoid shell escaping issues
+          ENV_VARS_B64=$(printf '%s' "$ENV_VARS_CONTENT" | base64 -w 0)
+
+          cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "cat > /tmp/deploy_${{ inputs.project_name }}.sh"
+          #!/bin/bash
+          set -e
+          echo "=== Starting deployment at \$(date) ==="
+          echo "Project: ${{ inputs.project_name }}"
+          echo "Branch: ${{ inputs.branch }}"
+
+          APP_DIR="${{ inputs.deploy_path }}"
+          REPO_URL="https://amapig:\${GH_TOKEN}@github.com/amapig/${{ inputs.repo_name }}.git"
+
+          echo ">>> Clone or update repository"
+          if [ -d "\$APP_DIR/.git" ]; then
+            cd "\$APP_DIR"
+            git remote set-url origin "\$REPO_URL"
+            git fetch origin
+            git reset --hard "origin/${{ inputs.branch }}"
+          else
+            git clone "\$REPO_URL" "\$APP_DIR"
+            cd "\$APP_DIR"
+          fi
+
+          echo ">>> Writing .env file"
+          echo "${ENV_VARS_B64}" | base64 -d > "\$APP_DIR/.env"
+
+          echo ">>> Install dependencies"
+          npm install --production=false
+          SCRIPT
+
+          # Add Prisma steps if needed
+          if [ "${{ inputs.prisma_generate }}" = "true" ]; then
+            cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                ${{ inputs.server_user }}@${{ inputs.server_host }} \
+                "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+
+          echo ">>> Generate Prisma client"
+          npx prisma generate
+          SCRIPT
+          fi
+
+          if [ "${{ inputs.prisma_migrate }}" = "true" ]; then
+            cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                ${{ inputs.server_user }}@${{ inputs.server_host }} \
+                "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+
+          echo ">>> Sync database schema"
+          npx prisma db push
+          SCRIPT
+          fi
+
+          # Add build and PM2 restart
+          cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+
+          echo ">>> Build"
+          ${{ inputs.build_cmd }}
+
+          echo ">>> Restart PM2"
+          SCRIPT
+
+          # PM2 restart mode
+          if [ "${{ inputs.pm2_mode }}" = "delete-recreate" ]; then
+            cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                ${{ inputs.server_user }}@${{ inputs.server_host }} \
+                "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+          if pm2 describe ${{ inputs.pm2_process }} > /dev/null 2>&1; then
+            pm2 delete ${{ inputs.pm2_process }}
+          fi
+          source .env
+          export \$(grep -v '^#' .env | grep '=' | xargs)
+          pm2 start npm --name ${{ inputs.pm2_process }} -- start
+          pm2 save
+          SCRIPT
+          else
+            cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                ${{ inputs.server_user }}@${{ inputs.server_host }} \
+                "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+          pm2 restart ${{ inputs.pm2_process }}
+          SCRIPT
+          fi
+
+          # Final status
+          cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "cat >> /tmp/deploy_${{ inputs.project_name }}.sh"
+
+          echo "=== Deploy complete at \$(date) ==="
+          pm2 status
+          SCRIPT
+
+      - name: Execute deploy script
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ inputs.server_user }}@${{ inputs.server_host }} \
+              "bash /tmp/deploy_${{ inputs.project_name }}.sh && rm /tmp/deploy_${{ inputs.project_name }}.sh"
