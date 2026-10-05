@@ -63,6 +63,9 @@ on:
         required: true
       GH_TOKEN:
         required: true
+      env_secret_vars:
+        description: 'Secret environment variables to append to .env file (one KEY=VALUE per line)'
+        required: false
 
 jobs:
   deploy:
@@ -87,10 +90,12 @@ jobs:
       - name: Write deploy script to server
         env:
           ENV_VARS_CONTENT: ${{ inputs.env_vars }}
+          ENV_SECRET_VARS: ${{ secrets.env_secret_vars }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           # Base64 encode env vars to avoid shell escaping issues
           ENV_VARS_B64=$(printf '%s' "$ENV_VARS_CONTENT" | base64 -w 0)
+          ENV_SECRET_B64=$(printf '%s' "$ENV_SECRET_VARS" | base64 -w 0)
 
           cat << SCRIPT | ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
@@ -119,6 +124,9 @@ jobs:
 
           echo ">>> Writing .env file"
           echo "${ENV_VARS_B64}" | base64 -d > "\$APP_DIR/.env"
+          if [ -n "${ENV_SECRET_B64}" ] && [ "${ENV_SECRET_B64}" != "Cg==" ]; then
+            echo "${ENV_SECRET_B64}" | base64 -d >> "\$APP_DIR/.env"
+          fi
 
           echo ">>> Install dependencies"
           npm install --production=false
