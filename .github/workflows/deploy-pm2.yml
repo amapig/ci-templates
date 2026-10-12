@@ -62,7 +62,7 @@ on:
       SERVER_SSH_KEY:
         required: true
       GH_TOKEN:
-        required: true
+        required: false
       env_secret_vars:
         description: 'Secret environment variables to append to .env file (one KEY=VALUE per line)'
         required: false
@@ -91,7 +91,6 @@ jobs:
         env:
           ENV_VARS_CONTENT: ${{ inputs.env_vars }}
           ENV_SECRET_VARS: ${{ secrets.env_secret_vars }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           # Base64 encode env vars to avoid shell escaping issues
           ENV_VARS_B64=$(printf '%s' "$ENV_VARS_CONTENT" | base64 -w 0)
@@ -109,7 +108,7 @@ jobs:
           echo "Branch: ${{ inputs.branch }}"
 
           APP_DIR="${{ inputs.deploy_path }}"
-          REPO_URL="https://amapig:\${GH_TOKEN}@github.com/amapig/${{ inputs.repo_name }}.git"
+          REPO_URL="git@github.com:amapig/${{ inputs.repo_name }}.git"
 
           echo ">>> Clone or update repository"
           if [ -d "\$APP_DIR/.git" ]; then
